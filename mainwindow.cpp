@@ -7,6 +7,7 @@
 #include <QString>
 #include <QDialog>
 #include <QLineEdit>
+#include "assembler.h"
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -18,9 +19,14 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->textEdit_2->setReadOnly(true); // 窗口只读
     ui->textEdit_3->setReadOnly(true); // 窗口只读
     ui->textEdit->append("<font color = 'gray'>NO FILE</font>");
+
+    //源文件
     isUntitled = false;
     isUnsaved = false;
+    //汇编文件
+    isAUntitled = false;
 
+    //查找的弹窗设置
     findDlg = new QDialog(this);
     findDlg->setWindowTitle("查找");
     findLineEdit = new QLineEdit(findDlg);
@@ -39,7 +45,8 @@ void MainWindow::newFile(){
     maybeSave();
     isUntitled = true;
     isUnsaved = true;
-    curFile = "未命名.asm";
+    isAUntitled = true;
+    curFile = "未命名.txt";
     setWindowTitle("MIPS_Assemblr @"+curFile);
     ui->textEdit->clear();
     ui->textEdit->setReadOnly(false);
@@ -73,7 +80,8 @@ bool MainWindow::save(){
 }
 
 bool MainWindow::saveAs(){
-    QString fileName = QFileDialog::getSaveFileName(this,"另存为",curFile);
+    QString fileName = QFileDialog::getSaveFileName(this,"另存为",curAFile,
+                                                    "TXT (*.txt);;Asm (*.asm);;COE (*.coe);;BIN (*.bin)");
     if(fileName.isEmpty())
         return false;
     return saveFile(fileName);
@@ -114,7 +122,9 @@ bool MainWindow::loadFile(const QString &fileName){
     ui->textEdit->setPlainText(in.readAll());
     QApplication::restoreOverrideCursor();
 
+    ui->textEdit->setReadOnly(false); // 窗口可写
     isUntitled = false; // 此文件已存在
+    isAUntitled = true; // 假设汇编文件不存在
     curFile = QFileInfo(fileName).canonicalFilePath();
     setWindowTitle("MIPS_Assemblr @"+curFile);
     return true;
@@ -156,14 +166,12 @@ void MainWindow::on_action_A_triggered()
 // 打开动作
 void MainWindow::on_action_O_triggered()
 {
-    if(maybeSave()){
-        QString fileName = QFileDialog::getOpenFileName(this);
-        // 文件名非空则加载
-        if(!fileName.isEmpty()){
-            loadFile(fileName);
-            ui->textEdit->setVisible(true);
-        }
-    }
+    maybeSave();
+    QString fileName = QFileDialog::getOpenFileName(this,"打开",QString(),
+                                                    "TXT (*.txt);;Asm (*.asm);;COE (*.coe);;BIN (*.bin)");
+    // 文件名非空则加载
+    if(!fileName.isEmpty())
+        loadFile(fileName);
 }
 // 关闭动作
 void MainWindow::on_action_C_2_triggered()
@@ -207,7 +215,49 @@ void MainWindow::closeEvent(QCloseEvent *event){
     event->accept();
 }
 
-void MainWindow::on_action_F_triggered()
-{
+void MainWindow::on_action_F_triggered(){
     findDlg->show();
 }
+
+void MainWindow::on_action_Asm_triggered(){
+    Assembler assembler;//嵌入汇编器
+    QString myasm = ui->textEdit->toPlainText(); // 框里的汇编语言
+    QString mybin = assembler.convert(myasm); // 转成机器语言
+    Asave(mybin);
+    isAUntitled = false; // 第一次项目汇编后 汇编文件存在
+    ui->textEdit_2->append(mybin);
+}
+
+bool MainWindow::Asave(const QString &content){
+    if(isAUntitled)
+        return AsaveAs(content);
+    else
+        return AsaveFile(curAFile,content);
+}
+
+bool MainWindow::AsaveAs(const QString &content){
+    QString fileName = QFileDialog::getSaveFileName(this,"另存为",curAFile,
+                                                    "TXT N(*.txt);;Asm (*.asm);;COE (*.coe);;BIN (*.bin)");
+    if(fileName.isEmpty())
+        return false;
+    return AsaveFile(fileName,content);
+}
+bool MainWindow::AsaveFile(const QString &fileName, const QString &content){
+    QFile file(fileName);
+    if(!file.open(QFile::WriteOnly | QFile::Text)){ // 报错
+        QMessageBox::warning(this, "MIPS_Assemblr",
+                             QString("无法写入文件 %1, /n %2")
+                             .arg(fileName).arg(file.errorString()));
+        return false;
+    }
+    QTextStream out(&file);
+    //鼠标指针变为等待状态
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    out << content;
+    //鼠标指针恢复原来的状态
+    QApplication::restoreOverrideCursor();
+    isAUntitled = false;
+    curAFile = QFileInfo(fileName).canonicalFilePath();
+    return true;
+}
+
