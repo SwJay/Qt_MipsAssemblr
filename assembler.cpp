@@ -1,16 +1,17 @@
 #include "assembler.h"
 #include <QRegExp>
 #include <QStringList>
+#include <cmath>
+#define MAX 1e5
 
 /*进度：
-debug coe bin文件
-当前问题
- R/0op除break解决
-已解决：
-附件：MIPS指令选集
-还需解决label：先扫一遍，处理伪指令
-多行注释\n
-*/
+ * break exception
+ *
+ * coe bin
+ * 报错
+ * 反汇编
+ */
+
 QMap<QString,int> opmap={{"lw",35},{"lb",32},{"lbu",36},{"lh",33},{"lhu",37},{"sw",43},{"sb",40},{"sh",41},
                         {"addi",8},{"addiu",9},{"andi",12},{"ori",13},{"xori",14},{"lui",15},{"slti",10},{"sltiu",11},
                         {"beq",4},{"bne",5},{"blez",6},{"bgtz",7},{"bltz",1},{"bgez",1},{"j",2},{"jal",3},
@@ -24,20 +25,24 @@ QMap<QString,int> fcmap={{"add",32},{"addu",33},{"sub",34},{"subu",35},{"slt",42
                         {"divu",27},{"jalr",9},{"jr",8},{"mfhi",16},{"mflo",18},{"mthi",17},{"mtlo",19},{"break",13},
                         {"syscall",12}};
 QMap<QString,int> lmap={};
+QList<int> base_A, base_D;
+int ERR;
 
 Assembler::Assembler(){}
 
 QString Assembler::convert(const QString &myasm){
-    int i, j, pos, pc;
-    QRegExp nocom("(((\\/\\/)|#).*\\n)");// discard all after "//" or "#" nocom("(\\/\\/.*\\n)")
+    bool ok=true;
+    int i, j, k, pos, pc, tmp_int;
+    QRegExp nocom("(((\\/\\/)|#).*\\n)");// discard all after "//" or "#"
     QRegExp rx("(\\b\\w*(\\(\\$)?\\w+\\)?\\b)");// get tuples
     QString tmp_str = myasm, mybin;
     nocom.setMinimal(true);
     tmp_str.replace(nocom," ");// discard all after "//" or "#"
     tmp_str = tmp_str.simplified();
-    QStringList alist = tmp_str.split(QRegExp("(:|;) ")), blist, clist, tmp_list;
+    QStringList alist = tmp_str.split(QRegExp("(:|;) ")), blist, tmp_list;
+    QList<uint> clist;
 
-    for(i=pc=0; i<alist.size(); i++){ // prepare: label & qseudo
+    for(i=pc=0; i<alist.size(); i++){ // prepare: label & qseudo & base
         pos = j = 0;
         while ((pos = rx.indexIn(alist.at(i), pos)) != -1) { // read in tuples
             tmp_list << rx.cap(1);
@@ -47,8 +52,12 @@ QString Assembler::convert(const QString &myasm){
         prepare(tmp_list, &blist, j, &pc);
         tmp_list.clear();
     }
-
-    for(i=pc=0; i<alist.size(); i++, pc+=4){ // assembler
+//    return blist.join("\n");
+    if(base_A.size()!=0)
+        pc = base_A.at(0);
+    for(i=0; i<blist.size(); i++, pc+=4){ // assembler
+        if(base_A.size()*base_D.size()!=0&&pc==base_D.at(0))
+            break;
         pos = 0;
         while ((pos = rx.indexIn(blist.at(i), pos)) != -1) { // read in tuples
             tmp_list << rx.cap(1);
@@ -58,16 +67,106 @@ QString Assembler::convert(const QString &myasm){
         tmp_list.clear();
     }
 
-    mybin = clist.join("\n");
+    if(base_D.size()){
+        for(; i<blist.size(); i+=4){ // data
+            // 可在这里加报错
+            for(k=tmp_int=0;k<4;k++){
+                tmp_str = blist.at(i+k);
+                tmp_int += tmp_str.toInt(&ok,16)*(int)pow(16,6-k*2);
+            }
+            clist << tmp_int;
+            tmp_list.clear();
+        }
+    }
+
+    for(i=0,pc=base_A.at(0); i<clist.size(); i++, pc+=4){
+        if(clist.at(i)==pow(2,32)-1){ // error
+            mybin = "ERROR";
+            break;
+        }
+        else
+            mybin += QString("0x%1: %2\n").arg(pc,8,16,QLatin1Char('0')).arg(clist.at(i),32,2,QLatin1Char('0'));
+    }
+
+    base_A.clear();
+    base_D.clear();
+    lmap.clear();
     return mybin;
 }
 //默认地址输入格式是8位16进制
 void Assembler::prepare(const QStringList &strlist, QStringList *blistp,const int &j, int *pc){
     bool ok = true;
+    int k;
     QString tmp_str = "";
-    QStringList tmp_list;
-
-    if(j==1) //label
+    QChar tmp_c;
+    //QStringList tmp_list;
+    if(strlist.at(0)=="BaseAddre"){
+        tmp_str = strlist.at(1);
+        k = tmp_str.toInt(&ok,16);
+        base_A.append(k);
+        if(k<base_A.at(0)+*pc){
+            ERR = 1;
+            return;
+        }
+        else if(k>base_A.at(0)+*pc)
+            for(;*pc+base_A.at(0)<k; *pc+=4)
+                *blistp << "nop";
+    }
+    else if(strlist.at(0)=="DataAddre"){
+        tmp_str = strlist.at(1);
+        k = tmp_str.toInt(&ok,16);
+        base_D.append(k);
+        if(k<base_A.at(0)+*pc){
+            ERR = 1;
+            return;
+        }
+        else if(k>base_A.at(0)+*pc)
+            for(;*pc+base_A.at(0)<k; *pc+=4)
+                *blistp << "nop";
+    }
+    else if(strlist.at(0)=="dd"){ // data
+        for(int i=1; i<j; i++){
+            tmp_str = strlist.at(i);
+            *blistp << tmp_str.mid(2,2);
+            *blistp << tmp_str.mid(4,2);
+            *blistp << tmp_str.mid(6,2);
+            *blistp << tmp_str.mid(8,2);
+        }
+        *pc += 4;
+    }
+    else if(strlist.at(0)=="dw"){ // data
+        for(int i=1; i<j; i++){
+            tmp_str = strlist.at(i);
+            if(tmp_str.mid(0,2)=="0x"){
+                *blistp << tmp_str.mid(2,2);
+                *blistp << tmp_str.mid(4,2);
+            }
+            else{
+                for(k=0; k<tmp_str.size(); k++){
+                    tmp_c = tmp_str.at(k);
+                    *blistp << QString("%1").arg(tmp_c.toLatin1(),2,16,QLatin1Char('0'));
+                }
+                if(k%2)
+                    *blistp << "0";
+            }
+        }
+        *pc += 2;
+    }
+    else if(strlist.at(0)=="db"){ // data
+        for(int i=1; i<j; i++){
+            tmp_str = strlist.at(i);
+            if(tmp_str.mid(0,2)=="0x")
+                *blistp << tmp_str.mid(2,2);
+            else{
+                for(int k=0; k<tmp_str.size(); k++){
+                    tmp_c = tmp_str.at(k);
+                    *blistp << QString("%1").arg(tmp_c.toLatin1(),2,16,QLatin1Char('0'));
+                }
+            }
+        }
+        *pc +=1;
+    }
+    else if(j==1) //label
         lmap[strlist.at(0)] = *pc;
     else if(strlist.at(0)=="la"){
         tmp_str = strlist.at(2).mid(0,4); // high 4-digit
@@ -94,7 +193,7 @@ void Assembler::prepare(const QStringList &strlist, QStringList *blistp,const in
     }
 }
 
-QString Assembler::assemble(const QStringList &strlist, int pc){
+uint Assembler::assemble(const QStringList &strlist, int pc){
     bool ok = true;
     int tmp;
     QString tmp_str;
@@ -103,28 +202,27 @@ QString Assembler::assemble(const QStringList &strlist, int pc){
         switch(opmap[strlist.at(0)]){
         case 1: //bltz
             tmp = (strlist.at(0)=="bltz")?0:1;
-            return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rs
-                    QString("%1").arg(tmp,5,2,QLatin1Char('0')) +" "+ // rt:0/1
-                    QString("%1").arg(strlist.at(2).toInt(&ok, 10),16,2,QLatin1Char('0')); // offset
+            return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                    regmap[strlist.at(1)]*(int)pow(2,21) + // rs
+                    tmp*(int)pow(2,16) + //rt
+                    strlist.at(2).toInt(&ok, 10); // offset
         case 2: // j
         case 3: // jal
-            return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                    QString("%1").arg(lmap[strlist.at(1)],26,2,QLatin1Char('0')); // address
+            return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                    lmap[strlist.at(1)]; // address
         case 4: // beq
         case 5: // bne
             tmp = (lmap[strlist.at(3)]>=pc)?(lmap[strlist.at(3)]-pc):(65536+lmap[strlist.at(3)]-pc);
-            return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rs
-                    QString("%1").arg(regmap[strlist.at(2)],5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(tmp,16,2,QLatin1Char('0')); // offset
+            return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                    regmap[strlist.at(1)]*(int)pow(2,21) + // rs
+                    regmap[strlist.at(2)]*(int)pow(2,16) + // rt
+                    tmp; // offset
         case 6: // blez
         case 7: // bgtz
             tmp = (lmap[strlist.at(2)]>=pc)?(lmap[strlist.at(2)]-pc):(65536+lmap[strlist.at(2)]-pc);
-            return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rs
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(tmp,16,2,QLatin1Char('0')); // offset
+            return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                    regmap[strlist.at(1)]*(int)pow(2,21) + // rs
+                    tmp; // offset
         case 8: // addi
         case 9: // addiu
         case 10: // slti
@@ -133,26 +231,24 @@ QString Assembler::assemble(const QStringList &strlist, int pc){
         case 13: // ori
         case 14: // xori
             tmp_str = strlist.at(3);
-            return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                    QString("%1").arg(regmap[strlist.at(2)],5,2,QLatin1Char('0')) +" "+ // rs
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(tmp_str.toInt(&ok, 10),16,2,QLatin1Char('0')); // imm
+            return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                    regmap[strlist.at(2)]*(int)pow(2,21) + // rs
+                    regmap[strlist.at(1)]*(int)pow(2,16) + // rt
+                    tmp_str.toInt(&ok, 10); // imm
         case 15: // lui
             tmp_str = strlist.at(2);
-            return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rs
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(tmp_str.toInt(&ok, 10),16,2,QLatin1Char('0')); // imm
+            return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                    regmap[strlist.at(1)]*(int)pow(2,16) + // rt
+                    tmp_str.toInt(&ok, 10); // imm
         case 16: // eret mfc0 mtc0
             if(strlist.at(0)=="eret")
-                return "010000 10000000000000000000 011000";
+                return 1107296280;
             else{
                 tmp = (strlist.at(0)=="mfc0")?0:4;
-                return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                        QString("%1").arg(tmp,5,2,QLatin1Char('0')) +" "+ // rs
-                        QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rt
-                        QString("%1").arg(regmap[strlist.at(2)],5,2,QLatin1Char('0')) +" "+ // rd
-                        QString("%1").arg(0,11,2,QLatin1Char('0')); // imm
+                return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                        tmp*(int)pow(2,21) + // rs
+                        regmap[strlist.at(1)]*(int)pow(2,16) + // rt
+                        regmap[strlist.at(2)]*(int)pow(2,11);
             }
         case 32: // lb
         case 33: // lh
@@ -168,63 +264,46 @@ QString Assembler::assemble(const QStringList &strlist, int pc){
                 tmp = tmp_str.toInt(&ok,10);
                 tmp_str = offset.cap(2);  // reg
             }
-            return QString("%1").arg(opmap[strlist.at(0)],6,2,QLatin1Char('0')) +" "+ // op
-                    QString("%1").arg(regmap[tmp_str],5,2,QLatin1Char('0')) +" "+ // rs
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(tmp,16,2,QLatin1Char('0')); // offset
+            return opmap[strlist.at(0)]*(int)pow(2,26) + // op
+                    regmap[tmp_str]*(int)pow(2,21) + // rs
+                    regmap[strlist.at(1)]*(int)pow(2,16) + // rt
+                    tmp; // offset
         }
     }
     else{ // R & others: 移动，传输，陷阱
-        if(strlist.at(0)=="srl"||strlist.at(0)=="sll"||strlist.at(0)=="sra"){ // 移动
-            tmp_str = strlist.at(3);
-            return QString("%1").arg(0,6,2,QLatin1Char('0')) +" "+ // op:0*6
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rs:0*5
-                    QString("%1").arg(regmap[strlist.at(2)],5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(tmp_str.toInt(&ok, 10),5,2,QLatin1Char('0')) +" "+ // shamt
-                    QString("%1").arg(fcmap[strlist.at(0)],6,2,QLatin1Char('0')); // func
+           if(strlist.at(0)=="srl"||strlist.at(0)=="sll"||strlist.at(0)=="sra"){ // 移动
+               tmp_str = strlist.at(3);
+               return regmap[strlist.at(2)]*(int)pow(2,16) + // rt
+                       regmap[strlist.at(1)]*(int)pow(2,11) + // rt
+                       tmp_str.toInt(&ok, 10)*(int)pow(2,6) + // shamt
+                       fcmap[strlist.at(0)]; // func
+           }
+           else if(strlist.at(0)=="jalr"||strlist.at(0)=="jr"){ // jalr jr
+               tmp_str = (strlist.at(0)=="jalr")?strlist.at(2):"zero";
+               return regmap[strlist.at(1)]*(int)pow(2,21) +
+                       regmap[tmp_str]*(int)pow(2,11) +
+                       fcmap[strlist.at(0)]; // func
+           }
+           else if(strlist.at(0)=="mfhi"||strlist.at(0)=="mflo"){ // 传输1: mfhi, mflo
+               return regmap[strlist.at(1)]*(int)pow(2,16) +
+                       fcmap[strlist.at(0)]; // func
+           }
+           else if(strlist.at(0)=="mthi"||strlist.at(0)=="mtlo"){ // 传输2: mthi, mtlo
+               return regmap[strlist.at(1)]*(int)pow(2,21) +
+                       fcmap[strlist.at(0)];
+           }
+           else if(strlist.at(0)=="syscall"||strlist.at(0)=="break"){ // 陷阱 ??break存疑
+               return fcmap[strlist.at(0)];
+           }
+           else if(strlist.at(0)=="nop")
+               return 0;
+           else{ // R
+               return regmap[strlist.at(1)]*(int)pow(2,21) +
+                       regmap[strlist.at(2)]*(int)pow(2,16) +
+                       regmap[strlist.at(3)]*(int)pow(2,11) +
+                       fcmap[strlist.at(0)]; // func
+           }
+        return pow(2,32)-1; // error
         }
-        else if(strlist.at(0)=="jalr"||strlist.at(0)=="jr"){ // jalr jr
-            tmp_str = (strlist.at(0)=="jalr")?strlist.at(2):"zero";
-            return QString("%1").arg(0,6,2,QLatin1Char('0')) +" "+ // op:0*6
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rs:0*5
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rt:0*5
-                    QString("%1").arg(regmap[tmp_str],5,2,QLatin1Char('0')) +" "+ // rd
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // shamt
-                    QString("%1").arg(fcmap[strlist.at(0)],6,2,QLatin1Char('0')); // func
-        }
-        else if(strlist.at(0)=="mfhi"||strlist.at(0)=="mflo"){ // 传输1: mfhi, mflo
-            return QString("%1").arg(0,6,2,QLatin1Char('0')) +" "+ // op:0*6
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rs:0*5
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rt:0*5
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rd
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // shamt
-                    QString("%1").arg(fcmap[strlist.at(0)],6,2,QLatin1Char('0')); // func
-        }
-        else if(strlist.at(0)=="mthi"||strlist.at(0)=="mtlo"){ // 传输2: mthi, mtlo
-            return QString("%1").arg(0,6,2,QLatin1Char('0')) +" "+ // op:0*6
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rs:
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rt:0*5
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rd:0*5
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // shamt
-                    QString("%1").arg(fcmap[strlist.at(0)],6,2,QLatin1Char('0')); // func
-        }
-        else if(strlist.at(0)=="syscall"||strlist.at(0)=="break"){ // 陷阱 ??break存疑
-            return QString("%1").arg(0,6,2,QLatin1Char('0')) +" "+ // op:0*6
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rs:0*5
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rt:0*5
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // rd:0*5
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // shamt:0*5
-                    QString("%1").arg(fcmap[strlist.at(0)],6,2,QLatin1Char('0')); // func
-        }
-        else{ // R
-            return QString("%1").arg(0,6,2,QLatin1Char('0')) +" "+ // op:0*6
-                    QString("%1").arg(regmap[strlist.at(1)],5,2,QLatin1Char('0')) +" "+ // rs
-                    QString("%1").arg(regmap[strlist.at(2)],5,2,QLatin1Char('0')) +" "+ // rt
-                    QString("%1").arg(regmap[strlist.at(3)],5,2,QLatin1Char('0')) +" "+ // rd
-                    QString("%1").arg(0,5,2,QLatin1Char('0')) +" "+ // shamt
-                    QString("%1").arg(fcmap[strlist.at(0)],6,2,QLatin1Char('0')); // func
-        }
-    }
-    return "ERROR";
-}
+    return 0;
+   }
