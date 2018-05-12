@@ -6,8 +6,6 @@
 
 /*进度：
  * break exception
- *
- * 反汇编
  */
 
 QMap<QString,int> opmap={{"lw",35},{"lb",32},{"lbu",36},{"lh",33},{"lhu",37},{"sw",43},{"sb",40},{"sh",41},
@@ -22,11 +20,28 @@ QMap<QString,int> fcmap={{"add",32},{"addu",33},{"sub",34},{"subu",35},{"slt",42
                         {"xor",38},{"nor",39},{"sll",0},{"srl",2},{"sra",3},{"mult",24},{"multu",25},{"div",26},
                         {"divu",27},{"jalr",9},{"jr",8},{"mfhi",16},{"mflo",18},{"mthi",17},{"mtlo",19},{"break",13},
                         {"syscall",12}};
+
+QMap<int,QString> ropmap={{35,"lw"},{32,"lb"},{36,"lbu"},{33,"lh"},{37,"lhu"},{43,"sw"},{40,"sb"},{41,"sh"},
+                        {8,"addi"},{9,"addiu"},{12,"andi"},{13,"ori"},{14,"xori"},{15,"lui"},{10,"slti"},{11,"sltiu"},
+                        {4,"beq"},{5,"bne"},{6,"blez"},{7,"bgtz"},{1,"bltz"},/*{"bgez",1}*/{2,"j"},{3,"jal"},
+                        {16,"eret"}};//,{"mfco",16},{"mtco",16}};
+QMap<int,QString> rregmap={{0,"zero"},{1,"at"},{2,"v0"},{3,"v1"},{4,"a0"},{5,"a1"},{6,"a2"},{7,"a3"},
+                        {8,"t0"},{9,"t1"},{10,"t2"},{11,"t3"},{12,"t4"},{13,"t5"},{14,"t6"},{15,"t7"},
+                        {16,"s0"},{17,"s1"},{18,"s2"},{19,"s3"},{20,"s4"},{21,"s5"},{22,"s6"},{23,"s7"},
+                        {24,"t8"},{25,"t9"},{26,"k0"},{27,"k1"},{28,"gp"},{29,"sp"},{30,"fp"},{31,"ra"}};
+QMap<int,QString> rfcmap={{32,"add"},{33,"addu"},{34,"sub"},{35,"subu"},{42,"slt"},{43,"sltu"},{36,"and"},{37,"or"},
+                        {38,"xor"},{39,"nor"},{0,"sll"},{2,"srl"},{3,"sra"},{24,"mult"},{25,"multu"},{26,"div"},
+                        {27,"divu"},{9,"jalr"},{8,"jr"},{16,"mfhi"},{18,"mflo"},{17,"mthi"},{19,"mtlo"},{13,"break"},
+                        {12,"syscall"}};
+
 QMap<QString,int> lmap={};
+QMap<int,QString> rlmap={};
+
 QList<int> base_A, base_D;
 QList<QString> errlist={"ok","[ERROR] The declared base-address is occupied, please check.",
                         "[ERROR] The declared base-address is occupied, please check.",
-                       "[ERROR] Unsupported instructions or pseudo-instructions are involved."};
+                       "[ERROR] Unsupported instructions or pseudo-instructions are involved.",
+                       "[ERROR] Current file isn't a COE or BIN, please check."};
 QList<uint> clist;
 int ERR;
 
@@ -54,8 +69,7 @@ QString Assembler::convert(const QString &myasm){
         tmp_list.clear();
     }
 //    return blist.join("\n");
-    if(base_A.size()!=0)
-        pc = base_A.at(0);
+    pc = base_A.size()?base_A.at(0):0;
     for(i=0, clist.clear(); i<blist.size()&&!ERR; i++, pc+=4){ // assembler
         if(base_A.size()*base_D.size()!=0&&pc==base_D.at(0))
             break;
@@ -79,8 +93,8 @@ QString Assembler::convert(const QString &myasm){
             tmp_list.clear();
         }
     }
-
-    for(i=0,pc=base_A.at(0); i<clist.size()&&!ERR; i++, pc+=4){
+    pc = base_A.size()?base_A.at(0):0;
+    for(i=0; i<clist.size()&&!ERR; i++, pc+=4){
         mybin += QString("0x%1: %2\n").arg(pc,8,16,QLatin1Char('0')).arg(clist.at(i),32,2,QLatin1Char('0'));
     }
 
@@ -201,7 +215,7 @@ uint Assembler::assemble(const QStringList &strlist, int pc){
             return opmap[strlist.at(0)]*(int)pow(2,26) + // op
                     regmap[strlist.at(1)]*(int)pow(2,21) + // rs
                     tmp*(int)pow(2,16) + //rt
-                    strlist.at(2).toInt(&ok, 10); // offset
+                    lmap[strlist.at(2)]-pc; // offset
         case 2: // j
         case 3: // jal
             return opmap[strlist.at(0)]*(int)pow(2,26) + // op
@@ -281,7 +295,7 @@ uint Assembler::assemble(const QStringList &strlist, int pc){
                        fcmap[strlist.at(0)]; // func
            }
            else if(strlist.at(0)=="mfhi"||strlist.at(0)=="mflo"){ // 传输1: mfhi, mflo
-               return regmap[strlist.at(1)]*(int)pow(2,16) +
+               return regmap[strlist.at(1)]*(int)pow(2,11) +
                        fcmap[strlist.at(0)]; // func
            }
            else if(strlist.at(0)=="mthi"||strlist.at(0)=="mtlo"){ // 传输2: mthi, mtlo
@@ -294,9 +308,9 @@ uint Assembler::assemble(const QStringList &strlist, int pc){
            else if(strlist.at(0)=="nop")
                return 0;
            else if(fcmap[strlist.at(0)]){ // R
-               return regmap[strlist.at(1)]*(int)pow(2,21) +
-                       regmap[strlist.at(2)]*(int)pow(2,16) +
-                       regmap[strlist.at(3)]*(int)pow(2,11) +
+               return regmap[strlist.at(3)]*(int)pow(2,21) +
+                       regmap[strlist.at(1)]*(int)pow(2,16) +
+                       regmap[strlist.at(2)]*(int)pow(2,11) +
                        fcmap[strlist.at(0)]; // func
            }
            else {
@@ -306,3 +320,172 @@ uint Assembler::assemble(const QStringList &strlist, int pc){
         }
     return 0;
    }
+
+QString Assembler::disassemble(const QString &mytxt){
+    QString txt = mytxt, tmp_str;
+    QStringList tlist, clist;
+    QList<uint> ulist;
+    QChar tmp_ch;
+    uint tmp;
+    int i, k, tmp_int;
+    bool ok = true;
+    if(txt.contains("memory_initialization_radix=16;")){ // coe
+        txt.chop(1); // 删掉最后一个;
+        txt.replace("memory_initialization_radix=16;\nmemory_initialization_vector= ","");
+        tlist = txt.split(", ");
+        for(int i=0;i<tlist.size();i++){
+            tmp_str = tlist.at(i);
+            ulist << tmp_str.toUInt(&ok,16);
+        }
+    }
+    else if(txt.size()%4==0){
+        for(i=tmp=0;i<txt.size();i+=4){
+            for(k=0;k<4;k++){
+                tmp_ch = txt.at(i+k);
+                tmp += (uint)pow(2,6-k*2)*(uint)tmp_ch.unicode();
+            }
+            ulist << tmp;
+        }
+    }
+    else{
+        ERR = 4;
+        return "";
+    }
+
+    for(i=k=0;i<ulist.size();i++){
+        tmp = ulist.at(i);
+        tmp_str = QString("%1").arg(tmp,32,2,QLatin1Char('0'));
+        switch (tmp_str.mid(0,6).toUInt(&ok,2)) {
+        case 1: //bltz bgez
+            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)/4; // offset
+            if(tmp_str.at(16)=="1")
+                tmp_int -= (int)pow(2,13);
+            if(rlmap[tmp_int]==0)
+                rlmap[tmp_int] = QString("Label_%1").arg(k++);
+            clist << QString((tmp_str.mid(11,5).toUInt(&ok,2)==1)?"bgez":"bltz") +
+                     " $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +
+                     ", "+ rlmap[tmp_int] + ";";
+            break;
+        case 2: // j
+        case 3: // jal
+            tmp_int = tmp_str.mid(6,26).toUInt(&ok,2)/4;
+            if(rlmap[tmp_int]==0)
+                rlmap[tmp_int] = QString("Label_%1").arg(tmp_int);
+            clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
+                    " " + rlmap[tmp_int] + ";";
+            break;
+        case 4: // beq
+        case 5: // bne
+            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)/4; // offset
+            if(tmp_str.at(16)=="1")
+                tmp_int -= (int)pow(2,13);
+            if(rlmap[tmp_int]==0)
+                rlmap[tmp_int] = QString("Label_%1").arg(k++);
+            clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
+                     " $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +
+                     ", $" + rregmap[tmp_str.mid(11,5).toUInt(&ok,2)] +
+                     ", " + rlmap[tmp_int] + ";";
+            break;
+        case 6: // blez
+        case 7: // bgtz
+            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)/4; // offset
+            if(tmp_str.at(16)=="1")
+                tmp_int -= (int)pow(2,13);
+            if(rlmap[tmp_int]==0)
+                rlmap[tmp_int] = QString("Label_%1").arg(k++);
+            clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
+                     " $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +
+                     ", " + rlmap[tmp_int] + ";";
+            break;
+        case 8: // addi
+        case 9: // addiu
+        case 10: // slti
+        case 11: // sltiu
+        case 12: // andi
+        case 13: // ori
+        case 14: // xori
+            clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
+                     " $" + rregmap[tmp_str.mid(11,5).toUInt(&ok,2)] +
+                     ", $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +
+                     ", " + QString("%1").arg(tmp_str.mid(16,16).toInt(&ok,2)) + ";";
+            break;
+        case 15: // lui
+            clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
+                     " $" + rregmap[tmp_str.mid(11,5).toUInt(&ok,2)] +
+                     ", " + QString("%1").arg(tmp_str.mid(16,16).toInt(&ok,2)) + ";";
+            break;
+        case 16: // eret mfc0 mtc0
+            if(tmp_str.toInt(&ok,2)==1107296280)
+                clist << "eret";
+            else
+                clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
+                        " $" + rregmap[tmp_str.mid(11,5).toUInt(&ok,2)] +
+                        ", $" + rregmap[tmp_str.mid(16,5).toUInt(&ok,2)] + ";";
+            break;
+        case 32: // lb
+        case 33: // lh
+        case 35: // lw
+        case 36: // lbu
+        case 37: // lhu
+        case 40: // sb
+        case 41: // sh
+        case 43: // sw
+            clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
+                    " $" + rregmap[tmp_str.mid(11,5).toUInt(&ok,2)] +
+                    ", " + QString("%1").arg(tmp_str.mid(16,16).toUInt(&ok,2)) +
+                    "($" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] + ");";
+            break;
+        case 0: // R
+            switch(tmp_str.mid(26,6).toUInt(&ok,2)){
+            case 0: // sll
+            case 2: // srl
+            case 3: // sra
+                clist << rfcmap[tmp_str.mid(26,6).toUInt(&ok,2)] +
+                        " $" + rregmap[tmp_str.mid(16,5).toUInt(&ok,2)] +
+                        ", $" + rregmap[tmp_str.mid(11,5).toUInt(&ok,2)] +
+                        ", " + QString("%1").arg(tmp_str.mid(21,5).toUInt(&ok,2)) + ";";
+                break;
+            case 8: // jr
+                clist << rfcmap[tmp_str.mid(26,6).toUInt(&ok,2)] +
+                        " $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +";";
+                break;
+            case 9: // jalr
+                clist << rfcmap[tmp_str.mid(26,6).toUInt(&ok,2)] +
+                        " $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +
+                        ", $" + rregmap[tmp_str.mid(16,5).toUInt(&ok,2)] +";";
+                break;
+            case 16: //mfhi
+            case 18: //mflo
+                clist << rfcmap[tmp_str.mid(26,6).toUInt(&ok,2)] +
+                        " $" + rregmap[tmp_str.mid(16,5).toUInt(&ok,2)] +";";
+                break;
+            case 17: //mthi
+            case 19: //mtlo
+                clist << rfcmap[tmp_str.mid(26,6).toUInt(&ok,2)] +
+                        " $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +";";
+                break;
+            case 12: // syscall
+                clist << "syscall;";
+                break;
+            case 13: // break
+                clist << "break;";
+                break;
+            default:
+                clist << rfcmap[tmp_str.mid(26,6).toUInt(&ok,2)] +
+                        " $" + rregmap[tmp_str.mid(16,5).toUInt(&ok,2)] +
+                        ", $" + rregmap[tmp_str.mid(6,5).toUInt(&ok,2)] +
+                        ", $" + rregmap[tmp_str.mid(11,5).toUInt(&ok,2)] +";";
+                break;
+            }
+            break;
+        }
+    }
+
+    for(i=0;i<clist.size();i++){ // add labels
+        if(rlmap[i]!=0)
+            clist.replace(i,rlmap[i]+":\n"+clist.at(i));
+    }
+
+    rlmap.clear();
+    return clist.join("\n");
+}
