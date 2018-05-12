@@ -5,16 +5,21 @@
 #include <QFileDialog>
 #include <QTextStream>
 #include <QString>
+#include <QChar>
 #include <QDialog>
 #include <QLineEdit>
 #include "assembler.h"
+
+extern QList<uint> clist;
+extern QList<QString> errlist;
+extern int ERR;
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    this->resize( QSize( 800, 600 )); // initialize the size of window
+    this->resize( QSize( 1000, 800 )); // initialize the size of window
     ui->textEdit->setReadOnly(true); // 窗口只读
     ui->textEdit_2->setReadOnly(true); // 窗口只读
     ui->textEdit_3->setReadOnly(true); // 窗口只读
@@ -220,28 +225,18 @@ void MainWindow::on_action_F_triggered(){
 }
 
 void MainWindow::on_action_Asm_triggered(){
+    ui->textEdit_2->clear();
     Assembler assembler;//嵌入汇编器
     QString myasm = ui->textEdit->toPlainText(); // 框里的汇编语言
-    QString mybin = assembler.convert(myasm); // 转成机器语言
-    Asave(mybin);
-    isAUntitled = false; // 第一次项目汇编后 汇编文件存在
-    ui->textEdit_2->append(mybin);
-}
-
-bool MainWindow::Asave(const QString &content){
-    if(isAUntitled)
-        return AsaveAs(content);
+    QString mytxt = assembler.convert(myasm); // 转成机器语言
+    if(!ERR){
+        isAUntitled = false;
+        ui->textEdit_2->append(mytxt);
+    }
     else
-        return AsaveFile(curAFile,content);
+        ui->textEdit_3->append(errlist[ERR]);
 }
 
-bool MainWindow::AsaveAs(const QString &content){
-    QString fileName = QFileDialog::getSaveFileName(this,"另存为",curAFile,
-                                                    "TXT N(*.txt);;Asm (*.asm);;COE (*.coe);;BIN (*.bin)");
-    if(fileName.isEmpty())
-        return false;
-    return AsaveFile(fileName,content);
-}
 bool MainWindow::AsaveFile(const QString &fileName, const QString &content){
     QFile file(fileName);
     if(!file.open(QFile::WriteOnly | QFile::Text)){ // 报错
@@ -256,8 +251,66 @@ bool MainWindow::AsaveFile(const QString &fileName, const QString &content){
     out << content;
     //鼠标指针恢复原来的状态
     QApplication::restoreOverrideCursor();
-    isAUntitled = false;
+    //isAUntitled = false;
     curAFile = QFileInfo(fileName).canonicalFilePath();
     return true;
 }
 
+bool MainWindow::AsaveAsCoe(const QString &content){
+    QString fileName = QFileDialog::getSaveFileName(this,"另存为",curAFile,
+                                                    "COE (*.coe)");
+    if(fileName.isEmpty())
+        return false;
+    return AsaveFile(fileName,content);
+}
+
+bool MainWindow::AsaveAsBin(const QString &content){
+    QString fileName = QFileDialog::getSaveFileName(this,"另存为",curAFile,
+                                                    "BIN (*.bin)");
+    if(fileName.isEmpty())
+        return false;
+    return AsaveFile(fileName,content);
+}
+
+void MainWindow::on_actionCoe_triggered(){
+    QString mycoe="";
+    int i;
+    uint tmp;
+    if(!isAUntitled){ // 已汇编
+        mycoe = "memory_initialization_radix=16;\nmemory_initialization_vector=";
+        for(i=0; i+1<clist.size(); i++){
+            tmp = clist.at(i);
+            mycoe += QString(" %1,").arg(tmp,8,16,QLatin1Char('0'));
+        }
+        tmp = clist.at(i);
+        mycoe += QString(" %1;").arg(tmp,8,16,QLatin1Char('0'));
+        AsaveAsCoe(mycoe);
+    }
+    else
+        on_action_Asm_triggered();
+}
+
+void MainWindow::on_actionBin_triggered(){
+    QString mybin="", tmp_str;
+    bool ok;
+    uint tmp;
+    QChar tmp_ch;
+    if(!isAUntitled){ // 已汇编
+        for(int i=0; i<clist.size(); i++){
+            tmp = clist.at(i);
+            tmp_str = QString("%1").arg(tmp,8,16,QLatin1Char('0'));
+            for(int k=0; k<4; k++){
+                tmp_ch = tmp_str.mid(6-k*2,2).toUInt(&ok,16);
+                mybin.append(tmp_ch);
+            }
+        }
+        AsaveAsBin(mybin);
+    }
+    else
+        on_action_Asm_triggered();
+}
+
+void MainWindow::on_action_triggered()
+{
+    ;
+}
