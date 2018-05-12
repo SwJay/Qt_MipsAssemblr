@@ -7,8 +7,6 @@
 /*进度：
  * break exception
  *
- * coe bin
- * 报错
  * 反汇编
  */
 
@@ -26,6 +24,10 @@ QMap<QString,int> fcmap={{"add",32},{"addu",33},{"sub",34},{"subu",35},{"slt",42
                         {"syscall",12}};
 QMap<QString,int> lmap={};
 QList<int> base_A, base_D;
+QList<QString> errlist={"ok","[ERROR] The declared base-address is occupied, please check.",
+                        "[ERROR] The declared base-address is occupied, please check.",
+                       "[ERROR] Unsupported instructions or pseudo-instructions are involved."};
+QList<uint> clist;
 int ERR;
 
 Assembler::Assembler(){}
@@ -40,9 +42,8 @@ QString Assembler::convert(const QString &myasm){
     tmp_str.replace(nocom," ");// discard all after "//" or "#"
     tmp_str = tmp_str.simplified();
     QStringList alist = tmp_str.split(QRegExp("(:|;) ")), blist, tmp_list;
-    QList<uint> clist;
 
-    for(i=pc=0; i<alist.size(); i++){ // prepare: label & qseudo & base
+    for(i=pc=ERR=0; i<alist.size(); i++){ // prepare: label & qseudo & base
         pos = j = 0;
         while ((pos = rx.indexIn(alist.at(i), pos)) != -1) { // read in tuples
             tmp_list << rx.cap(1);
@@ -55,7 +56,7 @@ QString Assembler::convert(const QString &myasm){
 //    return blist.join("\n");
     if(base_A.size()!=0)
         pc = base_A.at(0);
-    for(i=0; i<blist.size(); i++, pc+=4){ // assembler
+    for(i=0, clist.clear(); i<blist.size()&&!ERR; i++, pc+=4){ // assembler
         if(base_A.size()*base_D.size()!=0&&pc==base_D.at(0))
             break;
         pos = 0;
@@ -67,7 +68,7 @@ QString Assembler::convert(const QString &myasm){
         tmp_list.clear();
     }
 
-    if(base_D.size()){
+    if(base_D.size()&&!ERR){
         for(; i<blist.size(); i+=4){ // data
             // 可在这里加报错
             for(k=tmp_int=0;k<4;k++){
@@ -79,13 +80,8 @@ QString Assembler::convert(const QString &myasm){
         }
     }
 
-    for(i=0,pc=base_A.at(0); i<clist.size(); i++, pc+=4){
-        if(clist.at(i)==pow(2,32)-1){ // error
-            mybin = "ERROR";
-            break;
-        }
-        else
-            mybin += QString("0x%1: %2\n").arg(pc,8,16,QLatin1Char('0')).arg(clist.at(i),32,2,QLatin1Char('0'));
+    for(i=0,pc=base_A.at(0); i<clist.size()&&!ERR; i++, pc+=4){
+        mybin += QString("0x%1: %2\n").arg(pc,8,16,QLatin1Char('0')).arg(clist.at(i),32,2,QLatin1Char('0'));
     }
 
     base_A.clear();
@@ -117,7 +113,7 @@ void Assembler::prepare(const QStringList &strlist, QStringList *blistp,const in
         k = tmp_str.toInt(&ok,16);
         base_D.append(k);
         if(k<base_A.at(0)+*pc){
-            ERR = 1;
+            ERR = 2;
             return;
         }
         else if(k>base_A.at(0)+*pc)
@@ -297,13 +293,16 @@ uint Assembler::assemble(const QStringList &strlist, int pc){
            }
            else if(strlist.at(0)=="nop")
                return 0;
-           else{ // R
+           else if(fcmap[strlist.at(0)]){ // R
                return regmap[strlist.at(1)]*(int)pow(2,21) +
                        regmap[strlist.at(2)]*(int)pow(2,16) +
                        regmap[strlist.at(3)]*(int)pow(2,11) +
                        fcmap[strlist.at(0)]; // func
            }
-        return pow(2,32)-1; // error
+           else {
+               ERR = 3;
+               return 0; // error
+           }
         }
     return 0;
    }
