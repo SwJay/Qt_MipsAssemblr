@@ -330,6 +330,7 @@ QString Assembler::disassemble(const QString &mytxt){
     int i, k, tmp_int;
     bool ok = true;
     if(txt.contains("memory_initialization_radix=16;")){ // coe
+        txt = txt.simplified();
         txt.chop(1); // 删掉最后一个;
         txt.replace("memory_initialization_radix=16;\nmemory_initialization_vector= ","");
         tlist = txt.split(", ");
