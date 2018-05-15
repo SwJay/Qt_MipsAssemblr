@@ -6,6 +6,8 @@
 
 /*进度：
  * break exception
+ *
+ * 反汇编
  */
 
 QMap<QString,int> opmap={{"lw",35},{"lb",32},{"lbu",36},{"lh",33},{"lhu",37},{"sw",43},{"sb",40},{"sh",41},
@@ -177,7 +179,7 @@ void Assembler::prepare(const QStringList &strlist, QStringList *blistp,const in
         *pc +=1;
     }
     else if(j==1) //label
-        lmap[strlist.at(0)] = *pc;
+        lmap[strlist.at(0)] = *pc/4;
     else if(strlist.at(0)=="la"){
         tmp_str = strlist.at(2).mid(0,4); // high 4-digit
         tmp_str = QString("%1").arg(tmp_str.toInt(&ok, 16)); // transform into decimal
@@ -205,31 +207,33 @@ void Assembler::prepare(const QStringList &strlist, QStringList *blistp,const in
 
 uint Assembler::assemble(const QStringList &strlist, int pc){
     bool ok = true;
-    int tmp;
+    uint tmp;
+    uint tmp2;
     QString tmp_str;
     QRegExp offset("(\\d+)\\(\\$(\\w+)");
     if(opmap[strlist.at(0)]){ // I & J
         switch(opmap[strlist.at(0)]){
         case 1: //bltz
-            tmp = (strlist.at(0)=="bltz")?0:1;
+            tmp2 = (strlist.at(0)=="bltz")?0:1;
+            tmp = (lmap[strlist.at(2)]>=pc/4+1)?(lmap[strlist.at(2)]-pc/4-1):(65536+lmap[strlist.at(2)]-pc/4-1);
             return opmap[strlist.at(0)]*(int)pow(2,26) + // op
                     regmap[strlist.at(1)]*(int)pow(2,21) + // rs
-                    tmp*(int)pow(2,16) + //rt
-                    lmap[strlist.at(2)]-pc; // offset
+                    tmp2*(int)pow(2,16) + //rt
+                    tmp; // offset
         case 2: // j
         case 3: // jal
             return opmap[strlist.at(0)]*(int)pow(2,26) + // op
                     lmap[strlist.at(1)]; // address
         case 4: // beq
         case 5: // bne
-            tmp = (lmap[strlist.at(3)]>=pc)?(lmap[strlist.at(3)]-pc):(65536+lmap[strlist.at(3)]-pc);
+            tmp = (lmap[strlist.at(3)]>=pc/4+1)?(lmap[strlist.at(3)]-pc/4-1):(65536+lmap[strlist.at(3)]-pc/4-1);
             return opmap[strlist.at(0)]*(int)pow(2,26) + // op
                     regmap[strlist.at(1)]*(int)pow(2,21) + // rs
                     regmap[strlist.at(2)]*(int)pow(2,16) + // rt
                     tmp; // offset
         case 6: // blez
         case 7: // bgtz
-            tmp = (lmap[strlist.at(2)]>=pc)?(lmap[strlist.at(2)]-pc):(65536+lmap[strlist.at(2)]-pc);
+            tmp = (lmap[strlist.at(2)]>=pc/4+1)?(lmap[strlist.at(2)]-pc/4-1):(65536+lmap[strlist.at(2)]-pc/4-1);
             return opmap[strlist.at(0)]*(int)pow(2,26) + // op
                     regmap[strlist.at(1)]*(int)pow(2,21) + // rs
                     tmp; // offset
@@ -329,10 +333,10 @@ QString Assembler::disassemble(const QString &mytxt){
     uint tmp;
     int i, k, tmp_int;
     bool ok = true;
-    if(txt.contains("memory_initialization_radix=16;")){ // coe
+    if(txt.contains("memory_initialization_radix")){ // coe
         txt = txt.simplified();
         txt.chop(1); // 删掉最后一个;
-        txt.replace("memory_initialization_radix=16;\nmemory_initialization_vector= ","");
+        txt.replace("memory_initialization_radix=16; memory_initialization_vector= ","");
         tlist = txt.split(", ");
         for(int i=0;i<tlist.size();i++){
             tmp_str = tlist.at(i);
@@ -358,9 +362,9 @@ QString Assembler::disassemble(const QString &mytxt){
         tmp_str = QString("%1").arg(tmp,32,2,QLatin1Char('0'));
         switch (tmp_str.mid(0,6).toUInt(&ok,2)) {
         case 1: //bltz bgez
-            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)/4; // offset
+            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)+1; // offset
             if(tmp_str.at(16)=="1")
-                tmp_int -= (int)pow(2,13);
+                tmp_int -= (int)pow(2,15);
             if(rlmap[tmp_int]==0)
                 rlmap[tmp_int] = QString("Label_%1").arg(k++);
             clist << QString((tmp_str.mid(11,5).toUInt(&ok,2)==1)?"bgez":"bltz") +
@@ -369,7 +373,7 @@ QString Assembler::disassemble(const QString &mytxt){
             break;
         case 2: // j
         case 3: // jal
-            tmp_int = tmp_str.mid(6,26).toUInt(&ok,2)/4;
+            tmp_int = tmp_str.mid(6,26).toUInt(&ok,2);
             if(rlmap[tmp_int]==0)
                 rlmap[tmp_int] = QString("Label_%1").arg(tmp_int);
             clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
@@ -377,9 +381,9 @@ QString Assembler::disassemble(const QString &mytxt){
             break;
         case 4: // beq
         case 5: // bne
-            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)/4; // offset
+            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)+1; // offset
             if(tmp_str.at(16)=="1")
-                tmp_int -= (int)pow(2,13);
+                tmp_int -= (int)pow(2,15);
             if(rlmap[tmp_int]==0)
                 rlmap[tmp_int] = QString("Label_%1").arg(k++);
             clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
@@ -389,9 +393,9 @@ QString Assembler::disassemble(const QString &mytxt){
             break;
         case 6: // blez
         case 7: // bgtz
-            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)/4; // offset
+            tmp_int = i + tmp_str.mid(17,15).toInt(&ok,2)+1; // offset
             if(tmp_str.at(16)=="1")
-                tmp_int -= (int)pow(2,13);
+                tmp_int -= (int)pow(2,15);
             if(rlmap[tmp_int]==0)
                 rlmap[tmp_int] = QString("Label_%1").arg(k++);
             clist << ropmap[tmp_str.mid(0,6).toUInt(&ok,2)] +
